@@ -1,0 +1,58 @@
+version: 2
+
+# All ecosystems run Friday 13:00 Europe/Madrid.
+updates:
+  # ----- application dependencies -----
+
+  - package-ecosystem: pip
+    directory: /api
+    schedule:
+      interval: weekly
+      day: friday
+      time: "13:00"
+      timezone: Europe/Madrid
+    open-pull-requests-limit: 5
+
+  - package-ecosystem: npm
+    directory: /frontend
+    schedule:
+      interval: weekly
+      day: friday
+      time: "13:00"
+      timezone: Europe/Madrid
+    open-pull-requests-limit: 5
+
+  # ----- base images -----
+  # Bumps the FROM tag. Note it tracks the existing tag series, so it will
+  # offer python:3.9.x patches but will not jump 3.9 -> 3.13.
+
+  - package-ecosystem: docker
+    directory: /api
+    schedule:
+      interval: weekly
+      day: friday
+      time: "13:00"
+      timezone: Europe/Madrid
+    open-pull-requests-limit: 3
+
+  - package-ecosystem: docker
+    directory: /frontend
+    schedule:
+      interval: weekly
+      day: friday
+      time: "13:00"
+      timezone: Europe/Madrid
+    open-pull-requests-limit: 3
+
+  # ----- CI -----
+  # Keeps the `uses:` pins current, which is also what Semgrep's
+  # github-actions-mutable-action-tag findings are about.
+
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: weekly
+      day: friday
+      time: "13:00"
+      timezone: Europe/Madrid
+    open-pull-requests-limit: 5
