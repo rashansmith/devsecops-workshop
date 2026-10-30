@@ -1,0 +1,50 @@
+name: Build and Push Images
+
+# Run on pushes to main, on any git tag, or manually from the Actions tab.
+on:
+  push:
+    branches: [main]
+    tags: ["*"]
+  workflow_dispatch:
+
+jobs:
+  # Builds the api and frontend images and pushes them to Docker Hub.
+  build:
+    runs-on: ubuntu-latest
+
+    env:
+      # Docker Hub account the images are published under.
+      NAMESPACE: ${{ vars.DOCKERHUB_USERNAME }}
+      # Git tag push -> use the tag name; anything else -> latest.
+      IMAGE_TAG: ${{ github.ref_type == 'tag' && github.ref_name || 'latest' }}
+
+    steps:
+      # Fetch the repo so the Dockerfiles and sources are available.
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      # Authenticate so the push steps below are allowed.
+      - name: Log in to Docker Hub
+        uses: docker/login-action@v3
+        with:
+          username: ${{ vars.DOCKERHUB_USERNAME }}
+          password: ${{ secrets.DOCKERHUB_TOKEN }}
+
+      # ----- api -----
+      # Build the api image from ./api.
+      - name: Build api
+        run: docker build -t "$NAMESPACE/devsecops-workshop-api:$IMAGE_TAG" ./api
+
+      # Publish the api image to Docker Hub.
+      - name: Push api
+        run: docker push "$NAMESPACE/devsecops-workshop-api:$IMAGE_TAG"
+
+      # ----- frontend -----
+
+      # Build the frontend image from ./frontend.
+      - name: Build frontend
+        run: docker build -t "$NAMESPACE/devsecops-workshop-frontend:$IMAGE_TAG" ./frontend
+
+      # Publish the frontend image to Docker Hub.
+      - name: Push frontend
+        run: docker push "$NAMESPACE/devsecops-workshop-frontend:$IMAGE_TAG"
