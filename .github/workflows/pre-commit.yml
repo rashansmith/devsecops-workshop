@@ -1,0 +1,31 @@
+name: Pre-commit
+
+# Run on every pull request targeting main.
+on:
+  pull_request:
+    branches: [main]
+
+jobs:
+  # Runs the hooks from .pre-commit-config.yaml against the whole repo.
+  pre-commit:
+    name: Run pre-commit hooks
+    runs-on: ubuntu-latest
+    # Read-only token: the job only inspects the code, never writes back.
+    permissions:
+      contents: read
+
+    steps:
+      # Fetch the repo so the hooks have files to check.
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      # pre-commit is a Python tool, so it needs an interpreter available.
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.x'
+
+      # Runs `pre-commit run --all-files` and prints the diff for any hook
+      # that rewrites a file, so the author can apply it locally.
+      - name: Run pre-commit
+        uses: pre-commit/action@v3.0.1
