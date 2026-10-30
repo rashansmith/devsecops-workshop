@@ -11,6 +11,9 @@ jobs:
   # Builds the api and frontend images and pushes them to Docker Hub.
   build:
     runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      security-events: write # for the SARIF uploads to code scanning
 
     env:
       # Docker Hub account the images are published under.
@@ -30,10 +33,31 @@ jobs:
           username: ${{ vars.DOCKERHUB_USERNAME }}
           password: ${{ secrets.DOCKERHUB_TOKEN }}
 
+      # Pin the Trivy binary used by the image scans below.
+      - name: Set up Trivy
+        uses: aquasecurity/setup-trivy@v0.3.1
+        with:
+          version: v0.73.0
+
       # ----- api -----
+
       # Build the api image from ./api.
       - name: Build api
         run: docker build -t "$NAMESPACE/devsecops-workshop-api:$IMAGE_TAG" ./api
+
+      # Scan once into JSON, then convert. `trivy convert` re-renders an
+      # existing report, so the table and SARIF cost no extra scan.
+      # Informational only: no --exit-code, so findings never fail the build.
+      - name: Scan api image
+        run: |
+          trivy image \
+            --format json \
+            --output trivy-api-image.json \
+            --severity CRITICAL,HIGH,MEDIUM \
+            --ignore-unfixed \
+            "$NAMESPACE/devsecops-workshop-api:$IMAGE_TAG"
+          trivy convert --format table trivy-api-image.json
+          trivy convert --format sarif --output trivy-api.sarif trivy-api-image.json
 
       # Publish the api image to Docker Hub.
       - name: Push api
@@ -45,6 +69,83 @@ jobs:
       - name: Build frontend
         run: docker build -t "$NAMESPACE/devsecops-workshop-frontend:$IMAGE_TAG" ./frontend
 
+      # Same scan-then-convert flow as the api image above.
+      - name: Scan frontend image
+        run: |
+          trivy image \
+            --format json \
+            --output trivy-frontend-image.json \
+            --severity CRITICAL,HIGH,MEDIUM \
+            --ignore-unfixed \
+            "$NAMESPACE/devsecops-workshop-frontend:$IMAGE_TAG"
+          trivy convert --format table trivy-frontend-image.json
+          trivy convert --format sarif --output trivy-frontend.sarif trivy-frontend-image.json
+
       # Publish the frontend image to Docker Hub.
       - name: Push frontend
         run: docker push "$NAMESPACE/devsecops-workshop-frontend:$IMAGE_TAG"
+
+      # ----- reporting -----
+
+      # Each upload needs its own category. Without it, the second upload
+      # replaces the first one's alerts -- including Semgrep's.
+      - name: Upload api SARIF to code scanning
+        uses: github/codeql-action/upload-sarif@v3
+        with:
+          sarif_file: trivy-api.sarif
+          category: trivy-api
+
+      # Same, under its own category for the frontend image.
+      - name: Upload frontend SARIF to code scanning
+        uses: github/codeql-action/upload-sarif@v3
+        with:
+          sarif_file: trivy-frontend.sarif
+          category: trivy-frontend
+
+      # One engagement per image, matching the Dependency-Track project that
+      # the native DT integration imports into. Trivy and DT then land as two
+      # tests in the same engagement -- different scan_type, so they coexist
+      # rather than overwrite, and dedup can merge them if both parsers share
+      # the same hashcode configuration.
+      - name: Publish Trivy results to DefectDojo
+        env:
+          DD_URL: ${{ secrets.DEFECTDOJO_URL }}
+          DD_TOKEN: ${{ secrets.DEFECTDOJO_TOKEN }}
+          DD_ENGAGEMENT: ${{ vars.DEFECTDOJO_ENGAGEMENT }}
+          DD_PRODUCT: ${{ vars.DEFECTDOJO_PRODUCT }}
+          DD_ENGAGEMENT_API: ${{ vars.DEFECTDOJO_ENGAGEMENT_API }}
+          DD_ENGAGEMENT_FRONTEND: ${{ vars.DEFECTDOJO_ENGAGEMENT_FRONTEND }}
+          COMMIT: ${{ github.sha }}
+          BRANCH: ${{ github.ref_name }}
+          BUILD_ID: ${{ github.run_id }}
+        run: |
+          upload() {
+            local file="$1" title="$2" engagement="$3"
+            echo "Uploading ${file} as test '${title}' in engagement '${engagement}'"
+            curl -sS --fail-with-body \
+              -X POST "${DD_URL%/}/api/v2/reimport-scan/" \
+              -H "Authorization: Token ${DD_TOKEN}" \
+              -F "scan_type=Trivy Scan" \
+              -F "file=@${file}" \
+              -F "product_name=${DD_PRODUCT}" \
+              -F "engagement_name=${engagement}" \
+              -F "test_title=${title}" \
+              -F "auto_create_context=true" \
+              -F "close_old_findings=true" \
+              -F "active=true" \
+              -F "verified=false" \
+              -F "branch_tag=${BRANCH}" \
+              -F "commit_hash=${COMMIT}" \
+              -F "build_id=${BUILD_ID}"
+            echo
+          }
+
+          upload trivy-api-image.json trivy-api "$DD_ENGAGEMENT_API"
+          upload trivy-frontend-image.json trivy-frontend "$DD_ENGAGEMENT_FRONTEND"
+
+      # Keep the image SBOMs downloadable from the run summary.
+      - name: Upload image SBOMs as artifacts
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: image-sbom
+          path: trivy-*-image.json
